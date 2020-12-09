@@ -1,0 +1,10 @@
+[Unit]
+Description=HPN OpenSSH per-connection server daemon
+Documentation=man:sshd(8) man:sshd_config(5)
+Wants=sshd-keygen.target
+After=sshd-keygen.target
+
+[Service]
+EnvironmentFile=-/etc/sysconfig/sshd
+ExecStart=-/opt/hpnssh/usr/sbin/sshd -i $OPTIONS
+StandardInput=socket

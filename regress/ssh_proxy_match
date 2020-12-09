@@ -1,0 +1,26 @@
+Host *
+	Hostname		127.0.0.1
+	HostKeyAlias		localhost-with-alias
+	Port			4242
+	User			rapier
+	GlobalKnownHostsFile	/home/rapier/openssh-portable/regress/known_hosts
+	UserKnownHostsFile	/home/rapier/openssh-portable/regress/known_hosts
+	PubkeyAuthentication	yes
+	ChallengeResponseAuthentication	no
+	HostbasedAuthentication	no
+	PasswordAuthentication	no
+	BatchMode		yes
+	StrictHostKeyChecking	yes
+	LogLevel		DEBUG3
+SecurityKeyProvider /home/rapier/openssh-portable/regress/misc/sk-dummy/sk-dummy.so
+IdentityFile /home/rapier/openssh-portable/regress/ssh-ed25519
+IdentityFile /home/rapier/openssh-portable/regress/sk-ssh-ed25519@openssh.com
+IdentityFile /home/rapier/openssh-portable/regress/ssh-rsa
+IdentityFile /home/rapier/openssh-portable/regress/ssh-dss
+IdentityFile /home/rapier/openssh-portable/regress/ecdsa-sha2-nistp256
+IdentityFile /home/rapier/openssh-portable/regress/ecdsa-sha2-nistp384
+IdentityFile /home/rapier/openssh-portable/regress/ecdsa-sha2-nistp521
+IdentityFile /home/rapier/openssh-portable/regress/sk-ecdsa-sha2-nistp256@openssh.com
+proxycommand env SSH_SK_HELPER="/home/rapier/openssh-portable/ssh-sk-helper" sh /home/rapier/openssh-portable/regress/sshd-log-wrapper.sh /home/rapier/openssh-portable/regress/sshd.log /home/rapier/openssh-portable/sshd -i -f /home/rapier/openssh-portable/regress/sshd_proxy
+permitlocalcommand yes
+Match Exec "echo '%%/%C/%i/%h/%d/%L/%l/%n/%p/%r/%u' >/home/rapier/openssh-portable/regress/actual"
