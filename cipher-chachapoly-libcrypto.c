@@ -44,14 +44,15 @@ struct chachathread {
 	u_char *src;
 	u_int len;
 	u_int aadlen;
-	u_int srcaadlen;
 	u_int curpos;
+	pthread_t tid;
 	u_char *seqbuf;
 	struct chachapoly_ctx *ctx;
 	int response;
 } chachathread;
 
 int total = 0;
+int joined = 0;
 
 pthread_mutex_t lock;
 
@@ -91,23 +92,20 @@ chachapoly_free(struct chachapoly_ctx *cpctx)
 
 /* threaded function */
 void *chachapoly_thread_work(void *thread) {
-	total++;
+	//total++;
 	struct chachathread *localthread = (struct chachathread *)thread;
 	int ret = 0;
+	int val = 0;
 	fprintf(stderr, "Made thread!\n");
 	pthread_mutex_lock(&lock);
-	if (EVP_Cipher(localthread->ctx->main_evp, localthread->dest + localthread->aadlen + localthread->curpos, localthread->src + localthread->srcaadlen, localthread->len) < 0) {
+	val = EVP_Cipher(localthread->ctx->main_evp, localthread->dest + localthread->aadlen + localthread->curpos, localthread->src + localthread->aadlen, localthread->len);
+	pthread_mutex_unlock(&lock);
+	if (val < 0) {
 		fprintf(stderr, "Fail cipher\n");
 		localthread->response = SSH_ERR_LIBCRYPTO_ERROR;
 		ret = SSH_ERR_LIBCRYPTO_ERROR;
-		pthread_exit(&ret);
-		return NULL;
 	}
-	pthread_mutex_unlock(&lock);
-	//fprintf(stderr, "%lu, src is %s\n", pthread_self(), localthread->src);
-	//fprintf(stderr, "%lu, dest is %s\n", pthread_self(), localthread->dest);	
 	free((void *)localthread->src);
-	//fprintf (stderr, "Total is %d\n", total);
 	fprintf(stderr, "Leaving %lu\n", pthread_self());		
 	pthread_exit(&ret);
 	return NULL;
@@ -129,8 +127,7 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
 	u_char seqbuf[16]; /* layout: u64 counter || u64 seqno */
 	int r = SSH_ERR_INTERNAL_ERROR;
 	u_char expected_tag[POLY1305_TAGLEN], poly_key[POLY1305_KEYLEN];
-	struct chachathread thread[5];
-	pthread_t threadlist[5];
+	struct chachathread thread[4];
 	pthread_mutex_init(&lock, NULL);
 	
 	/*
@@ -228,8 +225,7 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
 			fprintf(stderr, "aad: %d Len: %d, Buffptr: %d, Chunk: %d Diff: %d\n", aadlen, len, bufptr, chunk, (len-bufptr));
 			if ((len - bufptr) >= chunk) {
 				fprintf(stderr,"3: len-buftr > chunk\n");
-
-				thread[i].src = calloc(chunk, 1);
+				thread[i].src = malloc(chunk);
 				memcpy(thread[i].src, src+bufptr, chunk);
 				fprintf(stderr, "bufptr is %d of %d diff %d\n", bufptr, len, (len - bufptr));
 				thread[i].curpos = bufptr;
@@ -237,8 +233,7 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
 				bufptr += chunk;
 			} else {
 				fprintf(stderr,"4: len - bufptr < chunk\n");
-	
-				thread[i].src = calloc(len-bufptr, sizeof(char));
+				thread[i].src = malloc(len-bufptr);
 				memcpy(thread[i].src, src+bufptr, (len-bufptr));
 				fprintf(stderr,"bufptr1 is %d of %d diff %d\n", bufptr, len, (len - bufptr));
 				thread[i].curpos = bufptr;
@@ -283,37 +278,32 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
 			//fill the struct for the thread
 			thread[i].dest = dest; // this is the u_char dest var passed into this function
 			thread[i].aadlen = aadlen;
-			// the first chunk of the src has 4 bytes (aad) that we need to
-			// track subsequent chunks do not so set the aadlen to 0
-			if (i == 0)
-				thread[i].srcaadlen = aadlen;
-			else
-				thread[i].srcaadlen = 0;
 			thread[i].seqbuf = seqbuf;
 			thread[i].ctx = ctx;
 			thread[i].response = 0;
 			//fprintf (stderr, "creating thread %lu\n", threadlist[i]);
-			//pthread_create(&threadlist[i], NULL, chachapoly_thread_work, (void *)&thread[i]);
+			//pthread_create(&thread[i].tid, NULL, chachapoly_thread_work, (void *)&thread[i]);
+			total++;
 		}
 
 		for (i=0; i < k; i++) {
 			// moved from prior loop as a test. 
-			pthread_create(&threadlist[i], NULL, chachapoly_thread_work, (void *)&thread[i]);
-			fprintf(stderr,"%d of %d %lu MADE\n", i, k, threadlist[i]);
-			if (pthread_kill(threadlist[i],0) != 0) {
-				//fprintf(stderr, "Couldn't kill TID: %lu\n", threadlist[i]);
+			pthread_create(&thread[i].tid, NULL, chachapoly_thread_work, (void *)&thread[i]);
+
+			fprintf(stderr,"%d of %d %lu MADE\n", i, k, thread[i].tid);
+			if (pthread_kill(thread[i].tid, 0) != 0)
+				fprintf(stderr,"pthread_join failure: Invalid thread id %lu in %s", thread[i].tid, __FUNCTION__);
+			else {
+				debug ("Joining %lu", thread[i].tid);
+				pthread_join(thread[i].tid, NULL);
+				joined++;
 			}
-			if (pthread_join(threadlist[i], NULL) != 0) {
-				fprintf(stderr, "Failed joining TID: %lu\n", threadlist[i]);
-			}
-			fprintf(stderr,"%d of %d %lu JOIN\n", i, k, threadlist[i]);
-			// probably don't need this as we can get the return value from
-			// pthread_join. fix this later. 
+			fprintf(stderr,"%d of %d %lu JOIN\n", i, k, thread[i].tid);
 			//if (thread[i].response == SSH_ERR_LIBCRYPTO_ERROR) {
 			//	fprintf(stderr,"Whoops!\n");
 			//	goto out;
 			//}
-			fprintf(stderr, "Exiting join loop\n");
+			fprintf(stderr, "Exiting join loop\ntotal: %d joined %d\n", total, joined);
 		}
 	} else { /*non threaded cc20 method*/
 		/* Set Chacha's block counter to 1 */
