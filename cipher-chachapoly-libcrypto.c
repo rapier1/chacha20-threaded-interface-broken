@@ -247,7 +247,6 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
                     fprintf(stderr,".01: len-buftr > chunk\n");
                     fflush(stderr);
                     thread[i].src = malloc(chunk);
-                    thread[i].dest = dest;
                     memcpy(thread[i].src, src+bufptr, chunk);
                     findent(stderr, 4, LVL_INDENT);
                     fprintf(stderr, ".02: bufptr is %d of %d diff %d\n", bufptr, len, (len - bufptr));
@@ -384,13 +383,6 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
                 fprintf(stderr, ".08: Exiting join loop\ntotal: %d joined %d\n", total_chunks, joined);
                 fflush(stderr);
             } /* for  */
-
-            for (int i = 0; i < total_chunks; i++) {
-                findent(stderr, 3, LVL_INDENT);
-                fprintf(stderr, ".09: reconstructing results from chunk %ld\n", i);
-                fflush(stderr);
-                memcpy((u_char *)(dest + (chunk * i)), thread[i].dest, thread[i].len);
-            }
 
 	} else { /*non threaded cc20 method*/
             findent(stderr, 2, LVL_INDENT);
