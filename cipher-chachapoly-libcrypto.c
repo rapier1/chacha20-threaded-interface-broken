@@ -36,7 +36,7 @@
 #include "cipher-chachapoly.h"
 
 #define LVL_INDENT  "  "
-#define MAX_THREADS 5
+#define MAX_THREADS 4
 #define findent(file, lvl, str) for (int c=0;c<lvl;c++) fprintf(file, "%s", str);
 
 struct chachapoly_ctx {
@@ -56,6 +56,10 @@ struct chachathread {
 } chachathread;
 
 pthread_mutex_t lock;
+pthread_cond_t cond;
+int threadcount;
+int test_val; // just to track things in the thread func
+int chunk_num;
 
 struct chachapoly_ctx *
 chachapoly_new(const u_char *key, u_int keylen)
@@ -101,7 +105,6 @@ void *chachapoly_thread_work(void *thread) {
     pthread_mutex_lock(&lock);
     val = EVP_Cipher(localthread->ctx->main_evp, localthread->dest + localthread->aadlen + localthread->curpos,
                      localthread->src + localthread->aadlen, localthread->len);
-
     pthread_mutex_unlock(&lock);
     if (val < 0) {
         findent(stderr, 1, LVL_INDENT);
@@ -113,6 +116,16 @@ void *chachapoly_thread_work(void *thread) {
     findent(stderr, 0, LVL_INDENT);
     fprintf(stderr, "01: Thread id %lu exiting!\n", pthread_self());
     fflush(stderr);
+    pthread_mutex_lock(&lock);
+    findent(stderr, 1, LVL_INDENT);
+    fprintf(stderr, ".01: Threadcount is %d of %d\n", threadcount, test_val);
+    fflush(stderr);
+    threadcount++;
+    findent(stderr, 1, LVL_INDENT);
+    fprintf(stderr, ".01: Threadcount is now %d of %d\n", threadcount, test_val);
+    fflush(stderr);
+    pthread_mutex_unlock(&lock);
+    pthread_exit(NULL);
     return NULL;
 }
 
@@ -209,7 +222,7 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
 	   dest at the appropriate byte location.
 	 */
 
-	u_int chunk = 8192; // 8k bytes
+	u_int chunk = 8196; // 8k bytes
 	// this chunk size is based on the maximum length passed which is
 	// 32784 bytes. Thats 32k +4 bytes. The 4 bytes are the aad
 
@@ -218,13 +231,14 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
             /* the chunk size don't bother with threading. */
             //char *srcblk[4];
             findent(stderr, 2, LVL_INDENT);
-            fprintf(stderr,".01: len (%lu) is > chunk (%lu)\n", len, chunk);
+            fprintf(stderr,".01: len (%d) is > chunk (%d)\n", len, chunk);
             fflush(stderr);
 
             u_int bufptr = 0; // track where we are in the buffer
             int i = 0; // iterator
             int total_chunks = 0; // holds total number of chunks made
             int joined = 0; // number of threads successfullyj joined
+	    threadcount = 0; 
             seqbuf[0] = 1; // set the cc20 sequence counter to 1
             // we only need to initialize once.
             if (!EVP_CipherInit(ctx->main_evp, NULL, NULL, seqbuf, 1)) {
@@ -237,9 +251,10 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
                 findent(stderr, 3, LVL_INDENT);
                 fprintf(stderr,".01: bufptr < len\n");
                 fflush(stderr);
+		total_chunks++;
                 findent(stderr, 3, LVL_INDENT);
-                fprintf(stderr, ".02: aad: %d Len: %d, Buffptr: %d, Chunk: %d Diff: %d\n", aadlen, len, bufptr,
-                        chunk, (len-bufptr));
+                fprintf(stderr, ".02: aad: %d Len: %d, Buffptr: %d, Chunk: %d Diff: %d total_chunks %d\n", aadlen,
+			len, bufptr, chunk, (len-bufptr), total_chunks);
                 fflush(stderr);
 
                 if ((len - bufptr) >= chunk) {
@@ -252,7 +267,7 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
                     fprintf(stderr, ".02: bufptr is %d of %d diff %d\n", bufptr, len, (len - bufptr));
                     fflush(stderr);
                     thread[i].curpos = bufptr;
-                    thread[i].len = chunk;
+                    thread[i].len = sizeof(thread[i].src);
                     bufptr += chunk;
                 } else {
                     findent(stderr, 4, LVL_INDENT);
@@ -264,7 +279,7 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
                     fprintf(stderr,".04: bufptr1 is %d of %d diff %d\n", bufptr, len, (len - bufptr));
                     fflush(stderr);
                     thread[i].curpos = bufptr;
-                    thread[i].len = len-bufptr;
+                    thread[i].len = sizeof(thread[i].src);
                     bufptr = len;
                 }
 
@@ -277,12 +292,13 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
                 fprintf(stderr,".03: chunk %d of size %d made\n", i, thread[i].len);
                 fflush(stderr);
                 i++;
-                total_chunks = i;
+                //total_chunks++;
             } /* while  */
-
+	    test_val = total_chunks; /* global to use in thread fun to compare thread count*/
+	                             /* get rid of this later */
             for (i = 0; i < total_chunks; i++) {
                 findent(stderr, 3, LVL_INDENT);
-                fprintf(stderr,".04: building struct %lu\n", i);
+                fprintf(stderr,".04: building struct %d\n", i);
                 fflush(stderr);
 
                 // not the right way to do this but
@@ -306,7 +322,7 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
                     break;
                 default:
                     findent(stderr, 4, LVL_INDENT);
-                    fprintf(stderr, ".01: unexpected number of chunks %lu\n", i);
+                    fprintf(stderr, ".01: unexpected number of chunks %d\n", i);
                     fflush(stderr);
                 }
 
@@ -383,31 +399,38 @@ chachapoly_crypt(struct chachapoly_ctx *ctx, u_int seqnr, u_char *dest,
                 fprintf(stderr, ".08: Exiting join loop\ntotal: %d joined %d\n", total_chunks, joined);
                 fflush(stderr);
             } /* for  */
-
+	    pthread_mutex_lock(&lock);
+	    while (threadcount < total_chunks) {
+		    findent(stderr, 0, LVL_INDENT);
+		    fprintf(stderr, "09: In while loop - TCOUNT %d and CHUNKS %d\n", threadcount, total_chunks);
+		    fflush(stderr);
+		    pthread_cond_wait(&cond, &lock);
+	    }
+	    pthread_mutex_unlock(&lock);
 	} else { /*non threaded cc20 method*/
-            findent(stderr, 2, LVL_INDENT);
-            fprintf(stderr, ".02: len %lu too small for threading\n", len);
-            fflush(stderr);
-            /* Set Chacha's block counter to 1 */
+		findent(stderr, 2, LVL_INDENT);
+		fprintf(stderr, ".02: len %d too small for threading\n", len);
+		fflush(stderr);
+		/* Set Chacha's block counter to 1 */
             seqbuf[0] = 1;
             if (!EVP_CipherInit(ctx->main_evp, NULL, NULL, seqbuf, 1) ||
                 EVP_Cipher(ctx->main_evp, dest + aadlen, src + aadlen, len) < 0) {
-                r = SSH_ERR_LIBCRYPTO_ERROR;
-                goto out;
+		    r = SSH_ERR_LIBCRYPTO_ERROR;
+		    goto out;
             }
 	}
-
+	
         findent(stderr, 1, LVL_INDENT);
 	fprintf(stderr, "02: Exiting chunk loop\n");
         fflush(stderr);
-
+	
 	/* If encrypting, calculate and append tag */
 	if (do_encrypt) {
             poly1305_auth(dest + aadlen + len, dest, aadlen + len,
                           poly_key);
 	}
 	r = 0;
- out:
+out:
 	explicit_bzero(expected_tag, sizeof(expected_tag));
 	explicit_bzero(seqbuf, sizeof(seqbuf));
 	explicit_bzero(poly_key, sizeof(poly_key));
