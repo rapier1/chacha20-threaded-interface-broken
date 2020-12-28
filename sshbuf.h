@@ -340,7 +340,21 @@ int sshbuf_write_file(const char *path, struct sshbuf *buf)
 		((u_char *)(p))[6] = (__v >> 8) & 0xff; \
 		((u_char *)(p))[7] = __v & 0xff; \
 	} while (0)
-#define POKE_U32(p, v) \
+
+#define POKE_U64_LITTLE(p, v) \
+	do { \
+		const u_int64_t __v = (v); \
+		((u_char *)(p))[7] = (__v >> 56) & 0xff; \
+		((u_char *)(p))[6] = (__v >> 48) & 0xff; \
+		((u_char *)(p))[5] = (__v >> 40) & 0xff; \
+		((u_char *)(p))[4] = (__v >> 32) & 0xff; \
+		((u_char *)(p))[3] = (__v >> 24) & 0xff; \
+		((u_char *)(p))[2] = (__v >> 16) & 0xff; \
+		((u_char *)(p))[1] = (__v >> 8) & 0xff; \
+		((u_char *)(p))[0] = __v & 0xff; \
+	} while (0)
+
+#define POKE_U32(p, v)				\
 	do { \
 		const u_int32_t __v = (v); \
 		((u_char *)(p))[0] = (__v >> 24) & 0xff; \
